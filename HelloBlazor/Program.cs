@@ -1,7 +1,11 @@
 using HelloBlazor.Client.Pages;
 using HelloBlazor.Components;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Isso "desbloqueia" as codificações antigas do Windows para o RtfPipe funcionar
+System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()

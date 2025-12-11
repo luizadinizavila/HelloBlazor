@@ -2,31 +2,29 @@
 @rendermode InteractiveServer
 @using HelloBlazor.Components.Services
 
-<PageTitle>Visualizador RTF</PageTitle>
+<PageTitle>Laudo Completo</PageTitle>
 
 <div class="container-fluid mt-3">
     <div class="row">
         <div class="col-md-4">
-            <div class="card mb-3">
-                <div class="card-header bg-primary text-white">1. Entrada RTF</div>
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white fw-bold">Entrada de Dados</div>
                 <div class="card-body">
-                    <textarea class="form-control mb-2" rows="5"
+                    <label class="text-muted small">Cole o código RTF:</label>
+                    <textarea class="form-control mb-3" rows="8"
                               @bind="conteudoRtf"
-                              placeholder="Cole o código RTF aqui..."></textarea>
+                              style="font-size: 0.8rem; font-family: monospace;"
+                              placeholder="{\rtf1..."></textarea>
 
-                    <button class="btn btn-success w-100" @onclick="Executar" disabled="@processando">
-                        @(processando ? "Processando..." : "PROCESSAR DOCUMENTO")
+                    <button class="btn btn-success w-100 fw-bold"
+                            @onclick="Executar" disabled="@processando">
+                        @(processando ? "PROCESSANDO..." : "GERAR LAUDO")
                     </button>
-                </div>
-            </div>
 
-            <div class="card">
-                <div class="card-header bg-dark text-white">Logs do Sistema</div>
-                <div class="card-body bg-black p-0">
-                    <div style="height: 250px; overflow-y: auto; font-family: monospace; font-size: 0.8em; color: #0f0; padding: 10px;">
+                    <div class="mt-3 p-2 bg-dark text-white rounded" style="height: 150px; overflow-y: auto; font-size: 0.75rem;">
                         @foreach (var log in resultado.Logs)
                         {
-                            <div>@log</div>
+                            <div style="border-bottom: 1px solid #333;">@log</div>
                         }
                     </div>
                 </div>
@@ -34,44 +32,47 @@
         </div>
 
         <div class="col-md-8">
-
-            <div class="card mb-3">
-                <div class="card-header bg-secondary text-white fw-bold">
-                    📄 Visualização do Documento (HTML Convertido)
+            <div class="card shadow">
+                <div class="card-header bg-secondary text-white fw-bold d-flex justify-content-between">
+                    <span>Visualização do Laudo</span>
+                    <span class="badge bg-light text-dark">Imagens: @resultado.ImagensBase64.Count</span>
                 </div>
-                <div class="card-body" style="min-height: 400px; max-height: 600px; overflow-y: auto; background-color: white;">
-                    @if (!string.IsNullOrEmpty(resultado.HtmlConteudo))
-                    {
-                        @((MarkupString)resultado.HtmlConteudo)
-                    }
-                    else
-                    {
-                        <p class="text-muted text-center mt-5">O conteúdo do documento aparecerá aqui.</p>
-                    }
+
+                <div class="card-body" style="background-color: #f8f9fa;">
+
+                    <div class="mx-auto bg-white border shadow-sm p-5"
+                         style="max-width: 210mm; min-height: 297mm; font-family: 'Times New Roman', Times, serif; color: black;">
+
+                        @if (!string.IsNullOrEmpty(resultado.HtmlConteudo))
+                        {
+                            <div class="laudo-texto">
+                                @((MarkupString)resultado.HtmlConteudo)
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="text-center text-muted py-5">O conteúdo aparecerá aqui.</p>
+                        }
+
+                        @* @if (resultado.ImagensBase64.Count > 0) *@
+                        @* { *@
+                        @*     <div class="mt-4 border-top pt-3"> *@
+                        @*         <h6 class="text-muted text-uppercase small fw-bold mb-3">Anexos / Assinaturas Recuperadas:</h6> *@
+                        @*         <div class="d-flex flex-wrap gap-3 justify-content-center"> *@
+                        @*             @foreach (var img in resultado.ImagensBase64) *@
+                        @*             { *@
+                        @*                 <div class="text-center"> *@
+                        @*                     <img src="data:image/png;base64,@img" *@
+                        @*                          style="max-height: 120px; border: 1px dashed #ccc; padding: 5px;" /> *@
+                        @*                 </div> *@
+                        @*             } *@
+                        @*         </div> *@
+                        @*     </div> *@
+                        @* } *@
+                    </div>
+
                 </div>
             </div>
-
-            @if (resultado.ImagensBase64.Count > 0)
-            {
-                <div class="card">
-                    <div class="card-header bg-success text-white">
-                        🖼️ Imagens Recuperadas Separadamente (@resultado.ImagensBase64.Count)
-                    </div>
-                    <div class="card-body bg-light">
-                        <div class="row">
-                            @foreach (var img in resultado.ImagensBase64)
-                            {
-                                <div class="col-md-3 text-center mb-3">
-                                    <div class="border bg-white p-2 rounded shadow-sm">
-                                        <img src="data:image/jpeg;base64,@img" class="img-fluid" style="max-height: 150px;" />
-                                    </div>
-                                </div>
-                            }
-                        </div>
-                    </div>
-                </div>
-            }
-
         </div>
     </div>
 </div>
@@ -85,20 +86,20 @@
     {
         processando = true;
         resultado = new ResultadoExtracao();
-        await Task.Delay(50); // Delay visual
+        await Task.Delay(50);
 
         try
         {
-            resultado.Logs.Add($"[{DateTime.Now:HH:mm:ss}] Iniciando processamento...");
+            // CHAMA A FUSÃO
             var res = Extrator.ProcessarRtf(conteudoRtf);
 
             resultado.HtmlConteudo = res.HtmlConteudo;
             resultado.ImagensBase64 = res.ImagensBase64;
-            resultado.Logs.AddRange(res.Logs);
+            resultado.Logs = res.Logs;
         }
         catch (Exception ex)
         {
-            resultado.Logs.Add($"ERRO: {ex.Message}");
+            resultado.Logs.Add($"ERRO UI: {ex.Message}");
         }
 
         processando = false;

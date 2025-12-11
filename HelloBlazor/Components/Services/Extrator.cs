@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
-using RtfPipe; // <--- ADICIONE ISSO (O pacote que você instalou)
+using System.Text.RegularExpressions; // <--- NECESSÁRIO PARA O TRANSPLANTE
+using RtfPipe;
 
 namespace HelloBlazor.Components.Services
 {
@@ -10,7 +10,7 @@ namespace HelloBlazor.Components.Services
     {
         public List<string> ImagensBase64 { get; set; } = new List<string>();
         public List<string> Logs { get; set; } = new List<string>();
-        public string HtmlConteudo { get; set; } = ""; // <--- NOVO: Para guardar o HTML
+        public string HtmlConteudo { get; set; } = "";
     }
 
     public class Extrator
@@ -20,29 +20,33 @@ namespace HelloBlazor.Components.Services
             var resultado = new ResultadoExtracao();
             void Log(string msg) => resultado.Logs.Add($"[{DateTime.Now:HH:mm:ss}] {msg}");
 
-            if (string.IsNullOrWhiteSpace(rtfConteudo))
+            if (string.IsNullOrWhiteSpace(rtfConteudo)) return resultado;
+
+            // ==============================================================================
+            // PASSO 1: LIMPEZA E GERAÇÃO DO HTML (ESQUELETO)
+            // ==============================================================================
+            string rtfParaTexto = rtfConteudo;
+
+            // Corrige o bug do cabeçalho oculto (para aparecer nome do paciente)
+            if (rtfParaTexto.Contains(@"\header"))
             {
-                Log("ERRO: Conteúdo RTF vazio.");
-                return resultado;
+                rtfParaTexto = rtfParaTexto.Replace(@"\header", @"\pard");
             }
 
-            // 1. TENTA CONVERTER O TEXTO PARA HTML (Para leitura humana)
-            Log("Convertendo estrutura de texto RTF para HTML...");
             try
             {
-                // O RtfPipe faz a mágica de transformar tabelas e texto em HTML
-                resultado.HtmlConteudo = Rtf.ToHtml(rtfConteudo);
-                Log("Conversão HTML realizada com sucesso.");
+                // Gera o HTML com os placeholders quebrados
+                resultado.HtmlConteudo = Rtf.ToHtml(rtfParaTexto);
+                Log("HTML gerado (com placeholders).");
             }
             catch (Exception ex)
             {
-                Log($"Aviso: Não foi possível converter o layout para HTML: {ex.Message}");
-                resultado.HtmlConteudo = "<p class='text-danger'>Erro ao renderizar layout.</p>";
+                resultado.HtmlConteudo = $"<p>Erro no layout: {ex.Message}</p>";
             }
 
-            // 2. EXTRAÇÃO AVANÇADA DE IMAGENS (Sua lógica que já funciona)
-            Log("Iniciando extração HÍBRIDA de imagens (OLE + PICT)...");
-
+            // ==============================================================================
+            // PASSO 2: EXTRAÇÃO DAS IMAGENS REAIS (ÓRGÃOS)
+            // ==============================================================================
             try
             {
                 using (StringReader sr = new StringReader(rtfConteudo))
@@ -52,13 +56,12 @@ namespace HelloBlazor.Components.Services
 
                     while (enumerator.MoveNext())
                     {
-                        // === ESTRATÉGIA 1: OLE OBJECT (SIMON MOURIER) ===
+                        // Procura \object (OLE)
                         if (enumerator.Current is RtfControlWord cw && cw.Text == "object")
                         {
                             if (RtfReader.MoveToNextControlWord(enumerator, "objclass"))
                             {
-                                string className = RtfReader.GetNextText(enumerator);
-                                if (className == "Package")
+                                if (RtfReader.GetNextText(enumerator) == "Package")
                                 {
                                     if (RtfReader.MoveToNextControlWord(enumerator, "objdata"))
                                     {
@@ -68,51 +71,93 @@ namespace HelloBlazor.Components.Services
                                 }
                             }
                         }
-                        // === ESTRATÉGIA 2: PICTURE TAG (NATIVO) ===
+                        // Procura \pict (NATIVO/QRCODE/ASSINATURA)
                         else if (enumerator.Current is RtfControlWord cwPict && cwPict.Text == "pict")
                         {
-                            // Tenta identificar o tipo
-                            string imageType = "unknown";
                             bool isDib = false;
+                            string type = "jpeg"; // Chute padrão
 
+                            // Descobre o tipo
                             while (enumerator.MoveNext())
                             {
                                 if (enumerator.Current is RtfControlWord typeCw)
                                 {
-                                    if (typeCw.Text.StartsWith("png")) { imageType = "png"; break; }
-                                    if (typeCw.Text.StartsWith("jpeg")) { imageType = "jpeg"; break; }
-                                    if (typeCw.Text.StartsWith("dibitmap")) { imageType = "bmp"; isDib = true; break; }
-                                    if (typeCw.Text.StartsWith("wmetafile")) { imageType = "wmf"; break; }
+                                    if (typeCw.Text.StartsWith("dibitmap")) { isDib = true; type = "bmp"; break; }
+                                    if (typeCw.Text.StartsWith("png")) { type = "png"; break; }
+                                    if (typeCw.Text.StartsWith("jpeg")) { type = "jpeg"; break; }
+                                    if (typeCw.Text.StartsWith("wmetafile")) { type = "wmf"; break; }
                                 }
                                 if (enumerator.Current is RtfText) break;
                             }
 
-                            if (imageType != "wmf") // Ignora WMF pois navegadores não abrem
+                            if (type != "wmf")
                             {
                                 byte[] imgData = RtfReader.GetNextTextAsByteArray(enumerator, resultado.Logs);
-
                                 if (imgData != null && imgData.Length > 0)
                                 {
-                                    if (isDib) imgData = ConvertDibToBmp(imgData); // Seu fix mágico
-
+                                    if (isDib) imgData = ConvertDibToBmp(imgData); // Fix do Bitmap
                                     string base64 = Convert.ToBase64String(imgData);
-                                    resultado.ImagensBase64.Add(base64);
-                                    Log($"SUCESSO! Imagem nativa ({imageType}) extraída.");
+
+                                    // Adiciona prefixo para HTML direto
+                                    string prefixo = type == "png" ? "data:image/png;base64," : "data:image/bmp;base64,";
+                                    resultado.ImagensBase64.Add(prefixo + base64);
+
+                                    Log($"Imagem ({type}) recuperada.");
                                 }
                             }
                         }
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) { Log($"Erro extrator img: {ex.Message}"); }
+
+            // ==============================================================================
+            // PASSO 3: O TRANSPLANTE (INJETAR IMAGENS NO HTML)
+            // ==============================================================================
+            if (resultado.ImagensBase64.Count > 0)
             {
-                Log($"ERRO FATAL NA EXTRAÇÃO: {ex.Message}");
+                Log($"Injetando {resultado.ImagensBase64.Count} imagens no documento...");
+                resultado.HtmlConteudo = InjetarImagensNoHtml(resultado.HtmlConteudo, resultado.ImagensBase64);
             }
 
             return resultado;
         }
 
-        // --- MÉTODOS AUXILIARES (IGUAIS AO ANTERIOR) ---
+        // --- SUBSTITUI AS TAGS <IMG> QUEBRADAS PELAS NOSSAS IMAGENS ---
+        private static string InjetarImagensNoHtml(string html, List<string> imagensBase64)
+        {
+            int indexImagem = 0;
+
+            // Esta Regex procura qualquer tag <img ... src="..." ... >
+            // O RtfPipe gera tags img quando encontra \pict, mas o src geralmente vem vazio ou quebrado para bitmaps
+            return Regex.Replace(html, "<img[^>]+src=[\"']([^\"']*)[\"'][^>]*>", match =>
+            {
+                // Se ainda temos imagens na nossa lista extraída, usamos a próxima
+                if (indexImagem < imagensBase64.Count)
+                {
+                    string tagOriginal = match.Value;
+                    string srcAntigo = match.Groups[1].Value; // O que está dentro das aspas do src
+                    string srcNovo = imagensBase64[indexImagem];
+
+                    indexImagem++;
+
+                    // Se a tag original não tinha style, vamos adicionar um tamanho padrão seguro
+                    // para evitar que o QR Code fique gigante
+                    string tagNova = tagOriginal.Replace(srcAntigo, srcNovo);
+
+                    if (!tagNova.Contains("style"))
+                    {
+                        tagNova = tagNova.Replace("<img", "<img style='max-width: 150px; height: auto;'");
+                    }
+
+                    return tagNova;
+                }
+
+                // Se acabaram as imagens, retorna a tag original (placeholder)
+                return match.Value;
+            });
+        }
+
         private static void ProcessarOlePackage(byte[] oleData, ResultadoExtracao resultado, Action<string> Log)
         {
             if (oleData == null || oleData.Length == 0) return;
@@ -125,12 +170,12 @@ namespace HelloBlazor.Components.Services
                     if (dataStream.Length > 0)
                     {
                         PackagedObject arquivoFinal = PackagedObject.Extract(dataStream);
-                        Log($"[OLE] Arquivo extraído: {arquivoFinal.DisplayName}");
-                        resultado.ImagensBase64.Add(Convert.ToBase64String(arquivoFinal.Data));
+                        // Assume JPEG para OLE
+                        resultado.ImagensBase64.Add("data:image/jpeg;base64," + Convert.ToBase64String(arquivoFinal.Data));
                     }
                 }
             }
-            catch (Exception) { /* Ignora erros de OLE silenciosamente para não poluir log */ }
+            catch { }
         }
 
         private static byte[] ConvertDibToBmp(byte[] dibData)
@@ -138,17 +183,14 @@ namespace HelloBlazor.Components.Services
             int headerSize = 14;
             int fileSize = headerSize + dibData.Length;
             byte[] bmp = new byte[fileSize];
-
-            bmp[0] = 0x42; bmp[1] = 0x4D; // BM
+            bmp[0] = 0x42; bmp[1] = 0x4D;
             BitConverter.GetBytes(fileSize).CopyTo(bmp, 2);
-            bmp[10] = 54; // Offset padrão seguro
-
+            bmp[10] = 54;
             if (dibData.Length > 4)
             {
                 int dibHeaderSize = BitConverter.ToInt32(dibData, 0);
                 BitConverter.GetBytes(14 + dibHeaderSize).CopyTo(bmp, 10);
             }
-
             Array.Copy(dibData, 0, bmp, 14, dibData.Length);
             return bmp;
         }
