@@ -22,82 +22,89 @@ namespace HelloBlazor.Components.Services
 
             if (string.IsNullOrWhiteSpace(rtfConteudo)) return resultado;
 
+            // Limpeza inicial de nulos
             string rtfLimpo = rtfConteudo.Replace("\0", "");
 
             // ==============================================================================
-            // PASSO 1: EXTRAIR O MIOLO (TEXTO) - COMO NO PROJETO 2
+            // FASE 1: O MIOLO (TEXTO PERFEITO) - Lógica do "Projeto 2"
             // ==============================================================================
-            // Usamos o RTF original. O RtfPipe vai ignorar header/footer mas vai ler o texto perfeito.
+            // Usamos o RTF original. O RtfPipe vai ignorar o cabeçalho/rodapé, 
+            // mas vai ler o texto do exame ("TOMOGRAFIA...") perfeitamente.
             string htmlMiolo = "";
             try
             {
+                // Gera o HTML padrão
                 string htmlBruto = Rtf.ToHtml(rtfLimpo);
 
-                // LIMPEZA CRÍTICA: Removemos <html>, <head> e <body> para sobrar só o conteúdo.
-                // Se não fizer isso, o navegador cria um "buraco" branco ao renderizar HTML aninhado.
+                // Remove as tags de estrutura (html, body) para sobrar apenas o conteúdo puro
                 htmlMiolo = LimparHtmlContainer(htmlBruto);
 
-                Log($"Miolo extraído com sucesso ({htmlMiolo.Length} chars).");
+                Log("Miolo (Texto do Exame) extraído.");
             }
             catch (Exception ex)
             {
-                htmlMiolo = "<p style='color:red'>[Falha ao ler o texto do laudo]</p>";
                 Log($"Erro no miolo: {ex.Message}");
+                htmlMiolo = "<p>[Erro ao ler texto]</p>";
             }
 
             // ==============================================================================
-            // PASSO 2: EXTRAIR A ESTRUTURA (CABEÇALHO E RODAPÉ) - COMO NO PROJETO 1
+            // FASE 2: A MOLDURA (CABEÇALHO + RODAPÉ) - Lógica do "Projeto 1" (Melhorada)
             // ==============================================================================
-            // Hackeamos o RTF para transformar Header e Footer em texto comum.
-            string htmlEstrutura = "";
+            string htmlMoldura = "";
             try
             {
                 string rtfHack = rtfLimpo;
 
-                // Força cabeçalho a aparecer
+                // --- FIX DO "y2693" ---
+                // Remove comandos de posicionamento vertical que vazam para o texto
+                // Remove \footeryXXXX e \headeryXXXX
+                rtfHack = Regex.Replace(rtfHack, @"\\(header|footer)[yx]\d+", "");
+                // ----------------------
+
+                // Transforma Header em texto normal (\pard)
                 if (rtfHack.Contains(@"\header"))
                     rtfHack = rtfHack.Replace(@"\header", @"\pard");
 
-                // Força rodapé a aparecer (com quebra de linha visual)
+                // Transforma Footer em texto normal (com linha separadora)
                 if (rtfHack.Contains(@"\footer"))
                     rtfHack = rtfHack.Replace(@"\footer", @"\pard\brdrt\brdrs\brdrw10\brsp100 ");
 
-                htmlEstrutura = Rtf.ToHtml(rtfHack);
-                Log("Estrutura (Paciente/Assinatura) gerada.");
+                htmlMoldura = Rtf.ToHtml(rtfHack);
+                Log("Moldura (Paciente/Assinatura) extraída.");
             }
-            catch (Exception ex) { Log($"Erro na estrutura: {ex.Message}"); }
+            catch (Exception ex) { Log($"Erro na moldura: {ex.Message}"); }
 
             // ==============================================================================
-            // PASSO 3: A FUSÃO (FRANKENSTEIN)
+            // FASE 3: A FUSÃO (FRANKENSTEIN)
             // ==============================================================================
-            if (!string.IsNullOrEmpty(htmlEstrutura))
+            // Vamos inserir o Miolo (Fase 1) dentro da Moldura (Fase 2)
+            if (!string.IsNullOrEmpty(htmlMoldura))
             {
-                // O Cabeçalho do paciente é sempre a primeira tabela.
-                // Injetamos o Miolo logo depois dela.
-                int fimTabelaCabecalho = htmlEstrutura.IndexOf("</table>");
+                // Procura o fim da tabela do cabeçalho (</table>)
+                int fimTabelaCabecalho = htmlMoldura.IndexOf("</table>");
 
                 if (fimTabelaCabecalho > 0)
                 {
-                    Log("Fusão: Inserindo texto do laudo após o cabeçalho.");
-                    // Injeta o miolo limpo dentro da estrutura
-                    resultado.HtmlConteudo = htmlEstrutura.Insert(fimTabelaCabecalho + 8,
-                        $"<div class='miolo-do-laudo' style='margin: 20px 0; padding: 10px;'>{htmlMiolo}</div>");
+                    // INSERÇÃO CIRÚRGICA: Coloca o texto logo após os dados do paciente
+                    resultado.HtmlConteudo = htmlMoldura.Insert(fimTabelaCabecalho + 8,
+                        $"<div class='miolo-do-laudo' style='margin: 25px 0; padding: 10px 0;'>{htmlMiolo}</div>");
+                    Log("Fusão realizada: Texto inserido após o cabeçalho.");
                 }
                 else
                 {
-                    // Se não achou tabela, concatena (Header + Miolo)
-                    resultado.HtmlConteudo = htmlEstrutura + "<hr/>" + htmlMiolo;
+                    // Se não achar tabela, concatena (Header + Texto)
+                    resultado.HtmlConteudo = htmlMoldura + "<hr/>" + htmlMiolo;
                 }
             }
             else
             {
-                resultado.HtmlConteudo = htmlMiolo; // Se falhou a estrutura, mostra só o texto
+                resultado.HtmlConteudo = htmlMiolo;
             }
 
             // ==============================================================================
-            // PASSO 4: IMAGENS (OLE / BITMAP)
+            // FASE 4: IMAGENS (OLE / BITMAP)
             // ==============================================================================
-            Log("Iniciando extração de imagens...");
+            Log("Extraindo imagens binárias...");
             try
             {
                 using (StringReader sr = new StringReader(rtfConteudo))
@@ -148,7 +155,7 @@ namespace HelloBlazor.Components.Services
                                     if (type == "jpeg") mime = "image/jpeg";
 
                                     resultado.ImagensBase64.Add($"data:{mime};base64,{base64}");
-                                    Log($"Imagem ({type}) recuperada.");
+                                    Log($"Imagem recuperada ({type}).");
                                 }
                             }
                         }
@@ -158,11 +165,11 @@ namespace HelloBlazor.Components.Services
             catch (Exception ex) { Log($"Erro imagens: {ex.Message}"); }
 
             // ==============================================================================
-            // PASSO 5: TRANSPLANTE VISUAL
+            // FASE 5: INJEÇÃO DAS IMAGENS
             // ==============================================================================
             if (resultado.ImagensBase64.Count > 0)
             {
-                Log($"Injetando {resultado.ImagensBase64.Count} imagens...");
+                Log($"Aplicando {resultado.ImagensBase64.Count} imagens no layout...");
                 resultado.HtmlConteudo = InjetarImagensNoHtml(resultado.HtmlConteudo, resultado.ImagensBase64);
             }
 
@@ -171,22 +178,13 @@ namespace HelloBlazor.Components.Services
 
         // --- MÉTODOS AUXILIARES ---
 
-        // Remove as tags de estrutura HTML para permitir aninhamento
         private static string LimparHtmlContainer(string html)
         {
             if (string.IsNullOrEmpty(html)) return "";
-
-            // Remove tudo antes da abertura do body
+            // Remove tudo antes e depois do body para permitir aninhamento
             int bodyStart = html.IndexOf("<body>");
-            if (bodyStart >= 0)
-            {
-                html = html.Substring(bodyStart + 6); // Pula "<body>"
-            }
-
-            // Remove o fechamento do body e html
-            html = html.Replace("</body>", "").Replace("</html>", "");
-
-            return html;
+            if (bodyStart >= 0) html = html.Substring(bodyStart + 6);
+            return html.Replace("</body>", "").Replace("</html>", "");
         }
 
         private static string InjetarImagensNoHtml(string html, List<string> imagensBase64)
@@ -202,7 +200,7 @@ namespace HelloBlazor.Components.Services
 
                     string tagNova = tagOriginal.Replace(match.Groups[1].Value, srcNovo);
                     if (!tagNova.Contains("style"))
-                        tagNova = tagNova.Replace("<img", "<img style='max-width: 150px; display:block;'");
+                        tagNova = tagNova.Replace("<img", "<img style='max-width: 180px; max-height: 120px; display:block;'");
                     return tagNova;
                 }
                 return match.Value;
