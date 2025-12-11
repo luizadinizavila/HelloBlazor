@@ -54,21 +54,22 @@
                             <p class="text-center text-muted py-5">O conteúdo aparecerá aqui.</p>
                         }
 
-                        @* @if (resultado.ImagensBase64.Count > 0) *@
-                        @* { *@
-                        @*     <div class="mt-4 border-top pt-3"> *@
-                        @*         <h6 class="text-muted text-uppercase small fw-bold mb-3">Anexos / Assinaturas Recuperadas:</h6> *@
-                        @*         <div class="d-flex flex-wrap gap-3 justify-content-center"> *@
-                        @*             @foreach (var img in resultado.ImagensBase64) *@
-                        @*             { *@
-                        @*                 <div class="text-center"> *@
-                        @*                     <img src="data:image/png;base64,@img" *@
-                        @*                          style="max-height: 120px; border: 1px dashed #ccc; padding: 5px;" /> *@
-                        @*                 </div> *@
-                        @*             } *@
-                        @*         </div> *@
-                        @*     </div> *@
-                        @* } *@
+                        @if (resultado.ImagensBase64.Count > 0)
+                        {
+                            <div class="mt-5 border-top pt-3">
+                                <h6 class="text-muted text-uppercase small fw-bold mb-3">Anexos / Assinaturas Recuperadas:</h6>
+                                <div class="d-flex flex-wrap gap-3 justify-content-center">
+                                    @foreach (var img in resultado.ImagensBase64)
+                                    {
+                                        <div class="text-center">
+                                            <img src="@img"
+                                                 style="max-height: 120px; border: 1px dashed #ccc; padding: 5px;"
+                                                 title="Imagem extraída" />
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
                     </div>
 
                 </div>
