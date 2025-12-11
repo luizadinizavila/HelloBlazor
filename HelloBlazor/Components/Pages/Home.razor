@@ -2,80 +2,78 @@
 @rendermode InteractiveServer
 @using HelloBlazor.Components.Services
 
-<PageTitle>Extrator RTF (Simon Mourier)</PageTitle>
+<PageTitle>Visualizador RTF</PageTitle>
 
-<div class="container mt-4">
-    <h2 class="mb-3">Extrator de Imagens OLE (Solução Simon Mourier)</h2>
-
+<div class="container-fluid mt-3">
     <div class="row">
-        <div class="col-md-6">
-            <div class="mb-3">
-                <label class="form-label fw-bold">Conteúdo RTF (Cole aqui):</label>
-                <textarea class="form-control" rows="12"
-                          @bind="conteudoRtf"
-                          placeholder="Comece com {\rtf1..."></textarea>
-                <small class="text-muted">Limite configurado para 64MB.</small>
+        <div class="col-md-4">
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">1. Entrada RTF</div>
+                <div class="card-body">
+                    <textarea class="form-control mb-2" rows="5"
+                              @bind="conteudoRtf"
+                              placeholder="Cole o código RTF aqui..."></textarea>
+
+                    <button class="btn btn-success w-100" @onclick="Executar" disabled="@processando">
+                        @(processando ? "Processando..." : "PROCESSAR DOCUMENTO")
+                    </button>
+                </div>
             </div>
 
-            <button class="btn btn-primary w-100 py-2" @onclick="Executar" disabled="@processando">
-                @(processando ? "Processando..." : "EXTRAIR IMAGENS")
-            </button>
+            <div class="card">
+                <div class="card-header bg-dark text-white">Logs do Sistema</div>
+                <div class="card-body bg-black p-0">
+                    <div style="height: 250px; overflow-y: auto; font-family: monospace; font-size: 0.8em; color: #0f0; padding: 10px;">
+                        @foreach (var log in resultado.Logs)
+                        {
+                            <div>@log</div>
+                        }
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="col-md-6">
-            <label class="form-label fw-bold">Logs do Processamento:</label>
-            <div class="bg-dark text-white p-3 rounded shadow-sm"
-                 style="height: 380px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 0.85rem;">
-                @if (resultado.Logs.Count == 0)
-                {
-                    <span class="text-secondary">Aguardando início...</span>
-                }
-                else
-                {
-                    @foreach (var log in resultado.Logs)
+        <div class="col-md-8">
+
+            <div class="card mb-3">
+                <div class="card-header bg-secondary text-white fw-bold">
+                    📄 Visualização do Documento (HTML Convertido)
+                </div>
+                <div class="card-body" style="min-height: 400px; max-height: 600px; overflow-y: auto; background-color: white;">
+                    @if (!string.IsNullOrEmpty(resultado.HtmlConteudo))
                     {
-                        // Estilização simples dos logs
-                        var cor = "text-white";
-                        if (log.Contains("ERRO") || log.Contains("Falha")) cor = "text-danger fw-bold";
-                        else if (log.Contains("SUCESSO")) cor = "text-success fw-bold";
-                        else if (log.Contains("-->")) cor = "text-info";
-
-                        <div class="@cor mb-1">@log</div>
+                        @((MarkupString)resultado.HtmlConteudo)
                     }
-                }
+                    else
+                    {
+                        <p class="text-muted text-center mt-5">O conteúdo do documento aparecerá aqui.</p>
+                    }
+                </div>
             </div>
-        </div>
-    </div>
 
-    <hr class="my-5" />
-
-    @if (resultado.ImagensBase64.Count > 0)
-    {
-        <h3 class="text-success">Imagens Encontradas (@resultado.ImagensBase64.Count):</h3>
-        <div class="row">
-            @foreach (var imgBase64 in resultado.ImagensBase64)
+            @if (resultado.ImagensBase64.Count > 0)
             {
-                <div class="col-md-4 mb-4">
-                    <div class="card h-100 shadow">
-                        <div class="card-body text-center d-flex align-items-center justify-content-center bg-light">
-                            <img src="data:image/jpeg;base64,@imgBase64"
-                                 class="img-fluid"
-                                 style="max-height: 250px;" />
-                        </div>
-                        <div class="card-footer text-muted text-center text-small">
-                            Imagem Extraída (OLE Package)
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        🖼️ Imagens Recuperadas Separadamente (@resultado.ImagensBase64.Count)
+                    </div>
+                    <div class="card-body bg-light">
+                        <div class="row">
+                            @foreach (var img in resultado.ImagensBase64)
+                            {
+                                <div class="col-md-3 text-center mb-3">
+                                    <div class="border bg-white p-2 rounded shadow-sm">
+                                        <img src="data:image/jpeg;base64,@img" class="img-fluid" style="max-height: 150px;" />
+                                    </div>
+                                </div>
+                            }
                         </div>
                     </div>
                 </div>
             }
+
         </div>
-    }
-    else if (resultado.Logs.Count > 0 && !processando)
-    {
-        <div class="alert alert-warning">
-            Nenhuma imagem válida foi extraída. Verifique os logs acima.
-        </div>
-    }
+    </div>
 </div>
 
 @code {
@@ -86,30 +84,21 @@
     private async Task Executar()
     {
         processando = true;
-        resultado = new ResultadoExtracao(); // Limpa logs anteriores
+        resultado = new ResultadoExtracao();
+        await Task.Delay(50); // Delay visual
 
-        // Pequeno delay para a UI atualizar o estado de "Processando"
-        await Task.Delay(50);
-
-        resultado.Logs.Add($"[{DateTime.Now:HH:mm:ss}] Botão clicado. Iniciando envio...");
-
-        if (string.IsNullOrWhiteSpace(conteudoRtf))
-        {
-            resultado.Logs.Add("ERRO: O campo de RTF está vazio!");
-            processando = false;
-            return;
-        }
-
-        // Chama o serviço
         try
         {
+            resultado.Logs.Add($"[{DateTime.Now:HH:mm:ss}] Iniciando processamento...");
             var res = Extrator.ProcessarRtf(conteudoRtf);
-            resultado.Logs.AddRange(res.Logs);
+
+            resultado.HtmlConteudo = res.HtmlConteudo;
             resultado.ImagensBase64 = res.ImagensBase64;
+            resultado.Logs.AddRange(res.Logs);
         }
         catch (Exception ex)
         {
-            resultado.Logs.Add($"ERRO INESPERADO NA CHAMADA: {ex.Message}");
+            resultado.Logs.Add($"ERRO: {ex.Message}");
         }
 
         processando = false;
