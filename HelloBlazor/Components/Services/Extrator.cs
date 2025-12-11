@@ -22,89 +22,47 @@ namespace HelloBlazor.Components.Services
 
             if (string.IsNullOrWhiteSpace(rtfConteudo)) return resultado;
 
-            // Limpeza inicial de nulos
-            string rtfLimpo = rtfConteudo.Replace("\0", "");
+            // ==============================================================================
+            // PASSO 1: LIMPEZA E GERAÇÃO DO HTML
+            // ==============================================================================
+            string rtfParaTexto = rtfConteudo;
 
-            // ==============================================================================
-            // FASE 1: O MIOLO (TEXTO PERFEITO) - Lógica do "Projeto 2"
-            // ==============================================================================
-            // Usamos o RTF original. O RtfPipe vai ignorar o cabeçalho/rodapé, 
-            // mas vai ler o texto do exame ("TOMOGRAFIA...") perfeitamente.
-            string htmlMiolo = "";
+            // 0. LIMPEZA DE ARTEFATOS
+            // Remove comandos de posicionamento (\headery2693, \footery1934) que o RtfPipe
+            // não entende e acaba imprimindo como texto na tela.
             try
             {
-                // Gera o HTML padrão
-                string htmlBruto = Rtf.ToHtml(rtfLimpo);
+                rtfParaTexto = Regex.Replace(rtfParaTexto, @"\\(header|footer)[yx]\d+", "");
+            }
+            catch {  }
 
-                // Remove as tags de estrutura (html, body) para sobrar apenas o conteúdo puro
-                htmlMiolo = LimparHtmlContainer(htmlBruto);
+            // 1. TRATAMENTO DE CABEÇALHO 
+            if (rtfParaTexto.Contains(@"\header"))
+            {
+                rtfParaTexto = rtfParaTexto.Replace(@"\header", @"\pard");
+            }
 
-                Log("Miolo (Texto do Exame) extraído.");
+            // 2. TRATAMENTO DE RODAPÉ
+            if (rtfParaTexto.Contains(@"\footer"))
+            {
+                // Substitui o footer por um parágrafo normal com uma linha de borda em cima
+                rtfParaTexto = rtfParaTexto.Replace(@"\footer", @"\pard\brdrt\brdrs\brdrw10\brsp100 ");
+            }
+
+            try
+            {
+                // Gera o HTML direto
+                resultado.HtmlConteudo = Rtf.ToHtml(rtfParaTexto);
+                Log("HTML gerado (Cabeçalho e Rodapé expostos).");
             }
             catch (Exception ex)
             {
-                Log($"Erro no miolo: {ex.Message}");
-                htmlMiolo = "<p>[Erro ao ler texto]</p>";
+                resultado.HtmlConteudo = $"<p>Erro no layout: {ex.Message}</p>";
             }
 
             // ==============================================================================
-            // FASE 2: A MOLDURA (CABEÇALHO + RODAPÉ) - Lógica do "Projeto 1" (Melhorada)
+            // PASSO 2: EXTRAÇÃO DAS IMAGENS REAIS
             // ==============================================================================
-            string htmlMoldura = "";
-            try
-            {
-                string rtfHack = rtfLimpo;
-
-                // --- FIX DO "y2693" ---
-                // Remove comandos de posicionamento vertical que vazam para o texto
-                // Remove \footeryXXXX e \headeryXXXX
-                rtfHack = Regex.Replace(rtfHack, @"\\(header|footer)[yx]\d+", "");
-                // ----------------------
-
-                // Transforma Header em texto normal (\pard)
-                if (rtfHack.Contains(@"\header"))
-                    rtfHack = rtfHack.Replace(@"\header", @"\pard");
-
-                // Transforma Footer em texto normal (com linha separadora)
-                if (rtfHack.Contains(@"\footer"))
-                    rtfHack = rtfHack.Replace(@"\footer", @"\pard\brdrt\brdrs\brdrw10\brsp100 ");
-
-                htmlMoldura = Rtf.ToHtml(rtfHack);
-                Log("Moldura (Paciente/Assinatura) extraída.");
-            }
-            catch (Exception ex) { Log($"Erro na moldura: {ex.Message}"); }
-
-            // ==============================================================================
-            // FASE 3: A FUSÃO (FRANKENSTEIN)
-            // ==============================================================================
-            // Vamos inserir o Miolo (Fase 1) dentro da Moldura (Fase 2)
-            if (!string.IsNullOrEmpty(htmlMoldura))
-            {
-                // Procura o fim da tabela do cabeçalho (</table>)
-                int fimTabelaCabecalho = htmlMoldura.IndexOf("</table>");
-
-                if (fimTabelaCabecalho > 0)
-                {
-                    // INSERÇÃO CIRÚRGICA: Coloca o texto logo após os dados do paciente
-                    resultado.HtmlConteudo = htmlMoldura.Insert(fimTabelaCabecalho + 8,
-                        $"<div class='miolo-do-laudo' style='margin: 25px 0; padding: 10px 0;'>{htmlMiolo}</div>");
-                    Log("Fusão realizada: Texto inserido após o cabeçalho.");
-                }
-                else
-                {
-                    // Se não achar tabela, concatena (Header + Texto)
-                    resultado.HtmlConteudo = htmlMoldura + "<hr/>" + htmlMiolo;
-                }
-            }
-            else
-            {
-                resultado.HtmlConteudo = htmlMiolo;
-            }
-
-            // ==============================================================================
-            // FASE 4: IMAGENS (OLE / BITMAP)
-            // ==============================================================================
-            Log("Extraindo imagens binárias...");
             try
             {
                 using (StringReader sr = new StringReader(rtfConteudo))
@@ -114,18 +72,22 @@ namespace HelloBlazor.Components.Services
 
                     while (enumerator.MoveNext())
                     {
-                        // OLE (Anexos)
+                        // Procura \object (OLE)
                         if (enumerator.Current is RtfControlWord cw && cw.Text == "object")
                         {
-                            if (RtfReader.MoveToNextControlWord(enumerator, "objclass") &&
-                                RtfReader.GetNextText(enumerator) == "Package" &&
-                                RtfReader.MoveToNextControlWord(enumerator, "objdata"))
+                            if (RtfReader.MoveToNextControlWord(enumerator, "objclass"))
                             {
-                                byte[] oleData = RtfReader.GetNextTextAsByteArray(enumerator, resultado.Logs);
-                                ProcessarOlePackage(oleData, resultado, Log);
+                                if (RtfReader.GetNextText(enumerator) == "Package")
+                                {
+                                    if (RtfReader.MoveToNextControlWord(enumerator, "objdata"))
+                                    {
+                                        byte[] oleData = RtfReader.GetNextTextAsByteArray(enumerator, resultado.Logs);
+                                        ProcessarOlePackage(oleData, resultado, Log);
+                                    }
+                                }
                             }
                         }
-                        // PICT (Assinaturas/QR)
+                        // Procura \pict (NATIVO/QRCODE/ASSINATURA)
                         else if (enumerator.Current is RtfControlWord cwPict && cwPict.Text == "pict")
                         {
                             bool isDib = false;
@@ -151,25 +113,24 @@ namespace HelloBlazor.Components.Services
                                     if (isDib) imgData = ConvertDibToBmp(imgData);
                                     string base64 = Convert.ToBase64String(imgData);
 
-                                    string mime = type == "png" ? "image/png" : "image/bmp";
-                                    if (type == "jpeg") mime = "image/jpeg";
+                                    string prefixo = type == "png" ? "data:image/png;base64," : "data:image/bmp;base64,";
+                                    resultado.ImagensBase64.Add(prefixo + base64);
 
-                                    resultado.ImagensBase64.Add($"data:{mime};base64,{base64}");
-                                    Log($"Imagem recuperada ({type}).");
+                                    Log($"Imagem ({type}) recuperada.");
                                 }
                             }
                         }
                     }
                 }
             }
-            catch (Exception ex) { Log($"Erro imagens: {ex.Message}"); }
+            catch (Exception ex) { Log($"Erro extrator img: {ex.Message}"); }
 
             // ==============================================================================
-            // FASE 5: INJEÇÃO DAS IMAGENS
+            // PASSO 3: INJETAR IMAGENS NO HTML
             // ==============================================================================
             if (resultado.ImagensBase64.Count > 0)
             {
-                Log($"Aplicando {resultado.ImagensBase64.Count} imagens no layout...");
+                Log($"Injetando {resultado.ImagensBase64.Count} imagens no documento...");
                 resultado.HtmlConteudo = InjetarImagensNoHtml(resultado.HtmlConteudo, resultado.ImagensBase64);
             }
 
@@ -177,16 +138,6 @@ namespace HelloBlazor.Components.Services
         }
 
         // --- MÉTODOS AUXILIARES ---
-
-        private static string LimparHtmlContainer(string html)
-        {
-            if (string.IsNullOrEmpty(html)) return "";
-            // Remove tudo antes e depois do body para permitir aninhamento
-            int bodyStart = html.IndexOf("<body>");
-            if (bodyStart >= 0) html = html.Substring(bodyStart + 6);
-            return html.Replace("</body>", "").Replace("</html>", "");
-        }
-
         private static string InjetarImagensNoHtml(string html, List<string> imagensBase64)
         {
             int indexImagem = 0;
@@ -195,12 +146,15 @@ namespace HelloBlazor.Components.Services
                 if (indexImagem < imagensBase64.Count)
                 {
                     string tagOriginal = match.Value;
+                    string srcAntigo = match.Groups[1].Value;
                     string srcNovo = imagensBase64[indexImagem];
                     indexImagem++;
 
-                    string tagNova = tagOriginal.Replace(match.Groups[1].Value, srcNovo);
+                    string tagNova = tagOriginal.Replace(srcAntigo, srcNovo);
                     if (!tagNova.Contains("style"))
-                        tagNova = tagNova.Replace("<img", "<img style='max-width: 180px; max-height: 120px; display:block;'");
+                    {
+                        tagNova = tagNova.Replace("<img", "<img style='max-width: 150px; height: auto;'");
+                    }
                     return tagNova;
                 }
                 return match.Value;
